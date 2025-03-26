@@ -3,7 +3,6 @@ const express = require("express");
 const cors = require("cors");
 const { Pool } = require("pg");
 const { ethers } = require("ethers");
-const { Connection } = require("@solana/web3.js");
 const uploadRoutes = require("./uploadRoutes");
 
 const app = express();
@@ -22,9 +21,6 @@ const db = new Pool({
 // EVM provider for Sepolia
 const sepoliaProvider = new ethers.JsonRpcProvider(process.env.SEPOLIA_RPC_URL);
 
-// Solana devnet connection
-const solConnection = new Connection(process.env.SOLANA_DEVNET_URL);
-
 app.get("/", (req, res) => {
   res.send("Hello from the Pool API!");
 });
@@ -39,21 +35,6 @@ async function verifyOnSepolia(txHash) {
     return receipt && receipt.status === 1;
   } catch (err) {
     console.error("Error verifying EVM tx:", err);
-    return false;
-  }
-}
-
-// -----------------------------------------------------------------------
-// Helper: Verify Solana tx
-// -----------------------------------------------------------------------
-async function verifyOnSolana(sig) {
-  try {
-    const tx = await solConnection.getParsedTransaction(sig, {
-      maxSupportedTransactionVersion: 0,
-    });
-    return !!tx; // if not null => we consider it verified
-  } catch (err) {
-    console.error("Error verifying Solana tx:", err);
     return false;
   }
 }
@@ -84,8 +65,6 @@ app.post("/api/transactions", async (req, res) => {
     let verified = false;
     if (chain === "Sepolia") {
       verified = await verifyOnSepolia(txHashOrSig);
-    } else if (chain === "SolanaDevnet") {
-      verified = await verifyOnSolana(txHashOrSig);
     }
 
     if (!verified) {
@@ -129,10 +108,12 @@ app.post("/api/transactions", async (req, res) => {
     // Participant updates
     if (txTypeLower === "deposit") {
       const participantInsertQuery = `
-        INSERT INTO pool_participants (pool_id, user_address, amount)
-        VALUES ($1, $2, $3)
+        INSERT INTO pool_participants (pool_id, user_address, amount, deposit_timestamp)
+        VALUES ($1, $2, $3, NOW())
         ON CONFLICT (pool_id, user_address)
-        DO UPDATE SET amount = pool_participants.amount + $3;
+        DO UPDATE SET 
+          amount = pool_participants.amount + $3,
+          deposit_timestamp = NOW();
       `;
       await db.query(participantInsertQuery, [
         poolId,
