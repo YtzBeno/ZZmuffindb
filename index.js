@@ -108,10 +108,12 @@ app.post("/api/transactions", async (req, res) => {
     // Participant updates
     if (txTypeLower === "deposit") {
       const participantInsertQuery = `
-        INSERT INTO pool_participants (pool_id, user_address, amount)
-        VALUES ($1, $2, $3)
+        INSERT INTO pool_participants (pool_id, user_address, amount, deposit_timestamp)
+        VALUES ($1, $2, $3, NOW())
         ON CONFLICT (pool_id, user_address)
-        DO UPDATE SET amount = pool_participants.amount + $3;
+        DO UPDATE SET 
+          amount = pool_participants.amount + $3,
+          deposit_timestamp = NOW();
       `;
       await db.query(participantInsertQuery, [
         poolId,
@@ -322,11 +324,22 @@ app.get("/api/pools/:id", async (req, res) => {
   }
 });
 
+function convertLockToSeconds(lockValue, lockUnit) {
+  const units = {
+    seconds: 1,
+    minutes: 60,
+    hours: 3600,
+    days: 86400,
+    weeks: 604800,
+    months: 2592000,
+  };
+  return lockValue * (units[lockUnit] || 1);
+}
+
 app.get("/api/dashboard/:walletAddress", async (req, res) => {
   try {
     const { walletAddress } = req.params;
 
-    // Pools created by the user
     const poolsCreatedQuery = `
       SELECT 
         id,
@@ -338,19 +351,20 @@ app.get("/api/dashboard/:walletAddress", async (req, res) => {
       WHERE owner_address = $1
     `;
 
-    // Deposits made by the user (from transactions table)
     const poolsDepositedQuery = `
       SELECT DISTINCT ON (p.id)
         p.id,
         p.pool_name,
         p.chain,
         p.current_pool_balance,
-        t.amount AS deposited_amount,
-        t.created_on
+        pp.amount AS deposited_amount,
+        pp.deposit_timestamp,
+        p.withdraw_lock,
+        p.withdraw_lock_unit
       FROM pools p
-      JOIN transactions t ON t.pool_id = p.id
-      WHERE t.user_address = $1 AND t.transaction_type = 'deposit'
-      ORDER BY p.id, t.created_on DESC
+      JOIN pool_participants pp ON pp.pool_id = p.id
+      WHERE pp.user_address = $1
+      ORDER BY p.id, pp.deposit_timestamp DESC
     `;
 
     const [createdResult, depositedResult] = await Promise.all([
@@ -365,11 +379,22 @@ app.get("/api/dashboard/:walletAddress", async (req, res) => {
 
     const depositedPools = depositedResult.rows.map((pool) => ({
       type: "Deposit",
-      ...pool,
+      id: pool.id,
+      pool_name: pool.pool_name,
+      chain: pool.chain,
+      current_pool_balance: pool.current_pool_balance,
+      deposited_amount: pool.deposited_amount,
+      deposit_timestamp: pool.deposit_timestamp,
+      withdraw_lock_seconds: convertLockToSeconds(
+        pool.withdraw_lock,
+        pool.withdraw_lock_unit
+      ),
     }));
 
     const combinedPools = [...createdPools, ...depositedPools].sort(
-      (a, b) => new Date(b.created_on) - new Date(a.created_on)
+      (a, b) =>
+        new Date(b.created_on || b.deposit_timestamp) -
+        new Date(a.created_on || a.deposit_timestamp)
     );
 
     res.json({ success: true, pools: combinedPools });
