@@ -346,6 +346,7 @@ app.get("/api/dashboard/:walletAddress", async (req, res) => {
         p.pool_name,
         p.chain,
         p.current_pool_balance,
+        p.rate_per_second,
         pp.amount AS deposited_amount,
         pp.deposit_timestamp,
         p.withdraw_lock,
