@@ -121,6 +121,18 @@ app.post("/api/transactions", async (req, res) => {
         amountNumber,
       ]);
     } else if (txTypeLower === "withdraw") {
+      const participantUpdateQuery = `
+        UPDATE pool_participants
+        SET amount = amount - $1
+        WHERE pool_id = $2 AND user_address = $3;
+      `;
+      await db.query(participantUpdateQuery, [
+        amountNumber,
+        poolId,
+        userAddress,
+      ]);
+
+      // Remove participant if balance drops to zero or negative
       await db.query(
         `DELETE FROM pool_participants WHERE pool_id = $1 AND user_address = $2;`,
         [poolId, userAddress]
