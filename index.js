@@ -349,8 +349,8 @@ app.get("/api/dashboard/:walletAddress", async (req, res) => {
         pp.amount AS deposited_amount,
         pp.deposit_timestamp,
         p.withdraw_lock,
-        p.withdraw_lock_unit
-        p.rate_per_second,
+        p.withdraw_lock_unit,
+        p.rate_per_second
       FROM pools p
       JOIN pool_participants pp ON pp.pool_id = p.id
       WHERE pp.user_address = $1
