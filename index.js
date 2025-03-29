@@ -379,6 +379,7 @@ app.get("/api/dashboard/:walletAddress", async (req, res) => {
         pool.withdraw_lock,
         pool.withdraw_lock_unit
       ),
+      rate_per_second: pool.rate_per_second,
     }));
 
     const combinedPools = [...createdPools, ...depositedPools].sort(
