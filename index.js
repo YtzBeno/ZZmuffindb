@@ -260,22 +260,25 @@ app.post("/api/pools", async (req, res) => {
       token_address,
       operator_address,
       owner_address,
-      rate_per_second,
-      max_deposit_percentage,
-      pool_fee_percentage,
-      seconds_wait,
+
+      rate_per_second.toString(),
+      parseFloat(max_deposit_percentage),
+      parseFloat(pool_fee_percentage),
+      parseFloat(seconds_wait),
+
       pool_website,
       pool_telegram,
       pool_x,
       contract_address,
       pool_token_account || null,
-      parseFloat(current_pool_balance), // <-- parse to float for numeric column
+
+      current_pool_balance.toString(),
       parseFloat(yield_value),
-      yield_unit, // text
+      yield_unit,
       parseFloat(deposit_limit),
       parseFloat(withdraw_fee),
       parseFloat(withdraw_lock),
-      withdraw_lock_unit, // text
+      withdraw_lock_unit,
     ]);
 
     return res.json({ success: true, pool: result.rows[0] });
