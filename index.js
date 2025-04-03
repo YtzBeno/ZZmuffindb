@@ -18,23 +18,28 @@ const db = new Pool({
   },
 });
 
-// EVM provider for Sepolia
-const sepoliaProvider = new ethers.JsonRpcProvider(process.env.SEPOLIA_RPC_URL);
+// EVM providers mapped by chain
+const providers = {
+  Sepolia: new ethers.JsonRpcProvider(process.env.SEPOLIA_RPC_URL),
+  BSC: new ethers.JsonRpcProvider(process.env.BSC_RPC_URL),
+  // Add other chains as needed
+};
 
 app.get("/", (req, res) => {
   res.send("Hello from the Pool API!");
 });
 
-// -----------------------------------------------------------------------
-// Helper: Verify EVM tx on Sepolia
-// -----------------------------------------------------------------------
-async function verifyOnSepolia(txHash) {
+async function verifyEvmTx(chain, txHash) {
   try {
-    const receipt = await sepoliaProvider.getTransactionReceipt(txHash);
-    // If receipt exists and status == 1 => success
+    const provider = providers[chain];
+    if (!provider) {
+      throw new Error(`Unsupported chain: ${chain}`);
+    }
+
+    const receipt = await provider.getTransactionReceipt(txHash);
     return receipt && receipt.status === 1;
   } catch (err) {
-    console.error("Error verifying EVM tx:", err);
+    console.error(`Error verifying EVM tx on ${chain}:`, err);
     return false;
   }
 }
@@ -63,8 +68,9 @@ app.post("/api/transactions", async (req, res) => {
 
     // Verify transaction on-chain
     let verified = false;
-    if (chain === "Sepolia") {
-      verified = await verifyOnSepolia(txHashOrSig);
+    const supportedChains = Object.keys(providers);
+    if (supportedChains.includes(chain)) {
+      verified = await verifyEvmTx(chain, txHashOrSig);
     }
 
     if (!verified) {
