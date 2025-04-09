@@ -4,6 +4,7 @@ const cors = require("cors");
 const { Pool } = require("pg");
 const { ethers } = require("ethers");
 const uploadRoutes = require("./uploadRoutes");
+const axios = require("axios");
 
 const app = express();
 app.use(cors());
@@ -401,5 +402,36 @@ app.get("/api/dashboard/:walletAddress", async (req, res) => {
   } catch (err) {
     console.error("Error fetching dashboard data:", err);
     res.status(500).json({ error: "Server error" });
+  }
+});
+
+// -----------------------------------------------------------------------
+// 1Inch
+// -----------------------------------------------------------------------
+
+const ONEINCH_API_KEY = process.env.ONEINCH_API_KEY;
+
+// Example route: GET /oneinch/tokens/:chainId
+app.get("/oneinch/tokens/:chainId", async (req, res) => {
+  try {
+    const chainId = req.params.chainId; // e.g. 56 for BSC
+    const url = `https://api.1inch.dev/swap/v6.0/${chainId}/tokens`;
+
+    const config = {
+      headers: {
+        Authorization: `Bearer ${ONEINCH_API_KEY}`, // Add your API key
+      },
+    };
+
+    // Forward the request to 1inch:
+    const response = await axios.get(url, config);
+    // response.data should contain the JSON from 1inch
+
+    // Return the JSON back to the caller (your React app):
+    return res.json(response.data);
+  } catch (err) {
+    console.error("1inch tokens error:", err.message);
+    // Send some error response to front-end
+    return res.status(500).json({ error: err.message });
   }
 });
