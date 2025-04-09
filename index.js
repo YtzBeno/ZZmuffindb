@@ -435,3 +435,42 @@ app.get("/oneinch/tokens/:chainId", async (req, res) => {
     return res.status(500).json({ error: err.message });
   }
 });
+
+// Example route #2: Get quote
+app.get("/oneinch/quote", async (req, res) => {
+  try {
+    // The front-end can pass query params: chainId, fromToken, toToken, amount, fee, etc.
+    const { chainId, fromTokenAddress, toTokenAddress, amount, fee } =
+      req.query;
+
+    const url = `https://api.1inch.dev/swap/v6.0/${chainId}/quote`;
+
+    // 1inch expects certain params (the exact param names differ from v5).
+    // For v6 aggregator, see their docs for "swap/v6.0/{chain}/quote"
+    // Typically fromTokenAddress => 'src', toTokenAddress => 'dst', etc. or usage of new param names.
+    // For example, if the docs say "dst" is the name for the 'toTokenAddress', do that:
+    // This is just an example. Adjust based on the official doc for v6 aggregator.
+
+    const config = {
+      headers: {
+        Authorization: `Bearer ${ONEINCH_API_KEY}`,
+      },
+      params: {
+        src: fromTokenAddress, // or fromTokenAddress if v6 supports that param
+        dst: toTokenAddress, // or toTokenAddress if v6 supports that param
+        amount: amount,
+        // fee is optional, if your aggregator usage supports it
+        fee: fee || "0",
+      },
+      paramsSerializer: {
+        indexes: null, // so axios doesn't do array indexes in query strings
+      },
+    };
+
+    const response = await axios.get(url, config);
+    res.json(response.data);
+  } catch (err) {
+    console.error("Quote Error:", err?.response?.data || err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
