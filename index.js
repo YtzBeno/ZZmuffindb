@@ -474,3 +474,61 @@ app.get("/oneinch/quote", async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 });
+
+app.get("/oneinch/swap", async (req, res) => {
+  try {
+    // 2) Extract your query params from the client
+    // For example, the front-end could call:
+    //   GET /oneinch/swap?chainId=56&src=0xeeee...&dst=0xe9e7...&amount=1000000000000000000
+    //        &from=0xYourWallet&origin=0xYourOrigin&fee=10&referrer=0xReferrerAddress
+    //
+    // Adjust this however you prefer (POST vs GET, param naming, etc.)
+    const {
+      chainId,
+      src, // fromTokenAddress in v6 naming
+      dst, // toTokenAddress
+      amount, // amount in minimal units
+      from, // the wallet that will execute the tx
+      origin, // typically your aggregator's address or "0x0000..." if none
+      fee, // e.g. "10" => 0.1% if 1 basis point = 0.01%
+      referrer, // your referral address
+    } = req.query;
+
+    // 3) Build the 1inch “swap” endpoint URL.
+    //    If chainId=56 => calls BSC. If chainId=1 => Ethereum mainnet, etc.
+    const swapUrl = `https://api.1inch.dev/swap/v6.0/${chainId}/swap`;
+
+    // 4) Config for axios
+    const config = {
+      headers: {
+        Authorization: `Bearer ${ONEINCH_API_KEY}`, // 1inch enterprise API token
+      },
+      params: {
+        src,
+        dst,
+        amount,
+        from,
+        origin,
+        fee,
+        referrer,
+        // You can also include slippage, gasPrice, disableEstimate, etc.
+        // e.g. slippage: "0.5"
+      },
+      // Tells axios not to insert array indexes (like param[0], param[1])
+      paramsSerializer: {
+        indexes: null,
+      },
+    };
+
+    // 5) Make the request to 1inch “swap” v6
+    const response = await axios.get(swapUrl, config);
+
+    // 6) Return the JSON to your frontend
+    //    response.data will contain the transaction object (tx) that you can use client-side
+    return res.json(response.data);
+  } catch (err) {
+    // If 1inch returns an error or rate limit, or any other error occurs, catch it
+    console.error("Swap error:", err?.response?.data || err.message);
+    return res.status(500).json({ error: err.message });
+  }
+});
