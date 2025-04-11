@@ -48,6 +48,7 @@ async function verifyEvmTx(chain, txHash) {
 // -----------------------------------------------------------------------
 // POST /api/transactions => insert a new transaction
 // -----------------------------------------------------------------------
+// POST /api/transactions
 app.post("/api/transactions", async (req, res) => {
   try {
     const { chain, txHashOrSig, poolId, userAddress, amount, txType } =
@@ -64,26 +65,23 @@ app.post("/api/transactions", async (req, res) => {
       return res.status(400).json({ error: "Missing required fields" });
     }
 
-    // Normalize txType to lowercase
     const txTypeLower = txType.toLowerCase();
 
-    // Verify transaction on-chain
+    // Verify transaction
     let verified = false;
     const supportedChains = Object.keys(providers);
     if (supportedChains.includes(chain)) {
       verified = await verifyEvmTx(chain, txHashOrSig);
     }
-
     if (!verified) {
       return res
         .status(400)
         .json({ error: "Could not verify transaction on-chain" });
     }
 
-    // Start DB transaction
     await db.query("BEGIN");
 
-    // Insert transaction
+    // 1) Insert transaction row
     const insertTransactionQuery = `
       INSERT INTO transactions (pool_id, transaction_type, amount, user_address, tx_hash_or_sig)
       VALUES ($1, $2, $3, $4, $5)
@@ -99,7 +97,7 @@ app.post("/api/transactions", async (req, res) => {
 
     const amountNumber = parseFloat(amount);
 
-    // Update pools table safely (handles NULL cases)
+    // 2) Update the pools table
     const poolUpdateQuery = `
       UPDATE pools
       SET current_pool_balance = COALESCE(current_pool_balance, 0) ${
@@ -108,18 +106,24 @@ app.post("/api/transactions", async (req, res) => {
           active_entries = GREATEST(COALESCE(active_entries, 0) ${
             txTypeLower === "deposit" ? "+" : "-"
           } 1, 0)
-      WHERE id = $2;
+      WHERE id = $2
+      RETURNING current_pool_balance, active_entries;
     `;
-    await db.query(poolUpdateQuery, [amountNumber, poolId]);
+    const poolUpdateResult = await db.query(poolUpdateQuery, [
+      amountNumber,
+      poolId,
+    ]);
+    const updatedBalance = poolUpdateResult.rows[0].current_pool_balance;
+    const updatedActiveEntries = poolUpdateResult.rows[0].active_entries;
 
-    // Participant updates
+    // 3) Update or remove participant
     if (txTypeLower === "deposit") {
       const participantInsertQuery = `
         INSERT INTO pool_participants (pool_id, user_address, amount, deposit_timestamp)
         VALUES ($1, $2, $3, NOW())
         ON CONFLICT (pool_id, user_address)
         DO UPDATE SET 
-          amount = pool_participants.amount + $3,
+          amount = pool_participants.amount + EXCLUDED.amount,
           deposit_timestamp = NOW();
       `;
       await db.query(participantInsertQuery, [
@@ -134,7 +138,13 @@ app.post("/api/transactions", async (req, res) => {
       );
     }
 
-    // Commit DB transaction
+    // 4) Insert into pool_history using updated values
+    await db.query(
+      `INSERT INTO pool_history (pool_id, balance, active_entries)
+       VALUES ($1, $2, $3)`,
+      [poolId, updatedBalance, updatedActiveEntries]
+    );
+
     await db.query("COMMIT");
 
     res.json({ success: true, transaction: transactionResult.rows[0] });
@@ -143,6 +153,21 @@ app.post("/api/transactions", async (req, res) => {
     console.error("Error in /api/transactions:", error);
     res.status(500).json({ error: "Server error" });
   }
+});
+
+// -----------------------------------------------------------------------
+// [NEW] api/api/pools/:poolId/history => get pool history information
+// -----------------------------------------------------------------------
+app.get("/api/pools/:poolId/history", async (req, res) => {
+  const { poolId } = req.params;
+  const sql = `
+    SELECT balance, active_entries, snapshot_date
+    FROM pool_history
+    WHERE pool_id = $1
+    ORDER BY snapshot_date ASC
+  `;
+  const { rows } = await db.query(sql, [poolId]);
+  res.json({ success: true, data: rows });
 });
 
 // -----------------------------------------------------------------------
