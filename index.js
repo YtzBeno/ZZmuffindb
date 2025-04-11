@@ -54,12 +54,34 @@ app.post("/api/transactions", async (req, res) => {
     const { chain, txHashOrSig, poolId, userAddress, amount, txType } =
       req.body;
 
-    // Basic validations, verify transaction, etc...
-    // ...
+    if (
+      !chain ||
+      !txHashOrSig ||
+      !poolId ||
+      !userAddress ||
+      !txType ||
+      amount === undefined
+    ) {
+      return res.status(400).json({ error: "Missing required fields" });
+    }
+
+    const txTypeLower = txType.toLowerCase();
+
+    // Verify transaction
+    let verified = false;
+    const supportedChains = Object.keys(providers);
+    if (supportedChains.includes(chain)) {
+      verified = await verifyEvmTx(chain, txHashOrSig);
+    }
+    if (!verified) {
+      return res
+        .status(400)
+        .json({ error: "Could not verify transaction on-chain" });
+    }
 
     await db.query("BEGIN");
 
-    // 1) Insert the transaction record
+    // 1) Insert transaction row
     const insertTransactionQuery = `
       INSERT INTO transactions (pool_id, transaction_type, amount, user_address, tx_hash_or_sig)
       VALUES ($1, $2, $3, $4, $5)
@@ -75,47 +97,27 @@ app.post("/api/transactions", async (req, res) => {
 
     const amountNumber = parseFloat(amount);
 
-    // 2) Update only the pool's current_pool_balance
-    //    Do NOT auto-increment active_entries here
-    const poolBalanceUpdateSql = `
+    // 2) Update the pools table
+    const poolUpdateQuery = `
       UPDATE pools
       SET current_pool_balance = COALESCE(current_pool_balance, 0) ${
         txTypeLower === "deposit" ? "+" : "-"
-      } $1
+      } $1,
+          active_entries = GREATEST(COALESCE(active_entries, 0) ${
+            txTypeLower === "deposit" ? "+" : "-"
+          } 1, 0)
       WHERE id = $2
       RETURNING current_pool_balance, active_entries;
     `;
-    const poolUpdateResult = await db.query(poolBalanceUpdateSql, [
+    const poolUpdateResult = await db.query(poolUpdateQuery, [
       amountNumber,
       poolId,
     ]);
     const updatedBalance = poolUpdateResult.rows[0].current_pool_balance;
-    let updatedActiveEntries = poolUpdateResult.rows[0].active_entries; // might change below
+    const updatedActiveEntries = poolUpdateResult.rows[0].active_entries;
 
-    // 3) Check if user is new or existing
-    const participantCheck = await db.query(
-      `SELECT * FROM pool_participants WHERE pool_id = $1 AND user_address = $2`,
-      [poolId, userAddress]
-    );
-    const isNewUser = participantCheck.rowCount === 0;
-
-    // 4) If deposit:
+    // 3) Update or remove participant
     if (txTypeLower === "deposit") {
-      // If user is new => increment active_entries
-      if (isNewUser) {
-        const activeUpdate = await db.query(
-          `
-          UPDATE pools
-          SET active_entries = COALESCE(active_entries,0)+1
-          WHERE id = $1
-          RETURNING active_entries;
-        `,
-          [poolId]
-        );
-        updatedActiveEntries = activeUpdate.rows[0].active_entries;
-      }
-
-      // Upsert participant row
       const participantInsertQuery = `
         INSERT INTO pool_participants (pool_id, user_address, amount, deposit_timestamp)
         VALUES ($1, $2, $3, NOW())
@@ -129,36 +131,23 @@ app.post("/api/transactions", async (req, res) => {
         userAddress,
         amountNumber,
       ]);
-
-      // 5) If withdraw:
     } else if (txTypeLower === "withdraw") {
-      // We'll assume a "full" withdrawal, so remove the row
-      if (!isNewUser) {
-        await db.query(
-          `DELETE FROM pool_participants WHERE pool_id = $1 AND user_address = $2`,
-          [poolId, userAddress]
-        );
-
-        // decrement active_entries by 1
-        const activeUpdate = await db.query(
-          `
-          UPDATE pools
-          SET active_entries = GREATEST(active_entries - 1, 0)
-          WHERE id = $1
-          RETURNING active_entries;
-        `,
-          [poolId]
-        );
-        updatedActiveEntries = activeUpdate.rows[0].active_entries;
-      }
+      await db.query(
+        `DELETE FROM pool_participants WHERE pool_id = $1 AND user_address = $2;`,
+        [poolId, userAddress]
+      );
     }
 
-    // 6) Insert snapshot into pool_history
-    await db.query(
-      `INSERT INTO pool_history (pool_id, balance, active_entries)
-       VALUES ($1, $2, $3)`,
-      [poolId, updatedBalance, updatedActiveEntries]
-    );
+    // 4) Insert into pool_history using updated values
+    const historyInsertQuery = `
+      INSERT INTO pool_history (pool_id, balance, active_entries)
+      VALUES ($1, $2, $3);
+    `;
+    await db.query(historyInsertQuery, [
+      poolId,
+      updatedBalance,
+      updatedActiveEntries,
+    ]);
 
     await db.query("COMMIT");
 
